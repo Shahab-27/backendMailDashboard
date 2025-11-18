@@ -8,6 +8,7 @@ const {
   restoreMail,
 } = require('../controllers/mailController');
 
+
 const router = express.Router();
 
 router.use(authMiddleware);
