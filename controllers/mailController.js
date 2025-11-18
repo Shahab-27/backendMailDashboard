@@ -1,7 +1,7 @@
 const Mail = require('../models/Mail');
 const User = require('../models/User');
 
-const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash'];
+const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash', 'drafts'];
 
 exports.getMails = async (req, res, next) => {
   try {
@@ -43,7 +43,7 @@ exports.getMailById = async (req, res, next) => {
 
 exports.sendMail = async (req, res, next) => {
   try {
-    const { to, subject = '', body = '' } = req.body;
+    const { to, subject = '', body = '', draftId } = req.body;
 
     if (!to) {
       return res.status(400).json({ message: 'Recipient email is required' });
@@ -71,7 +71,41 @@ exports.sendMail = async (req, res, next) => {
       });
     }
 
+    if (draftId) {
+      await Mail.deleteOne({ _id: draftId, owner: req.user._id, folder: 'drafts' });
+    }
+
     res.status(201).json(senderMail);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.saveDraft = async (req, res, next) => {
+  try {
+    const { id, to = '', subject = '', body = '' } = req.body;
+    const payload = {
+      owner: req.user._id,
+      from: req.user.email,
+      to,
+      subject,
+      body,
+      folder: 'drafts',
+    };
+
+    let draft;
+    if (id) {
+      draft = await Mail.findOneAndUpdate({ _id: id, owner: req.user._id }, payload, {
+        new: true,
+      });
+      if (!draft) {
+        return res.status(404).json({ message: 'Draft not found' });
+      }
+    } else {
+      draft = await Mail.create(payload);
+    }
+
+    res.status(id ? 200 : 201).json(draft);
   } catch (error) {
     next(error);
   }

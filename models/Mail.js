@@ -15,9 +15,9 @@ const mailSchema = new mongoose.Schema(
     },
     to: {
       type: String,
-      required: true,
       trim: true,
       lowercase: true,
+      default: '',
     },
     subject: {
       type: String,
@@ -31,7 +31,7 @@ const mailSchema = new mongoose.Schema(
     },
     folder: {
       type: String,
-      enum: ['inbox', 'sent', 'trash'],
+      enum: ['inbox', 'sent', 'trash', 'drafts'],
       default: 'inbox',
     },
   },
