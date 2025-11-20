@@ -1,5 +1,6 @@
 const Mail = require('../models/Mail');
 const User = require('../models/User');
+const { sendMail: deliverMail, isMailerConfigured } = require('../config/mailer');
 
 const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash', 'drafts'];
 
@@ -48,6 +49,19 @@ exports.sendMail = async (req, res, next) => {
     if (!to) {
       return res.status(400).json({ message: 'Recipient email is required' });
     }
+
+    if (!isMailerConfigured) {
+      return res
+        .status(500)
+        .json({ message: 'Outgoing email service is not configured on the server' });
+    }
+
+    await deliverMail({
+      to,
+      subject,
+      text: body,
+      html: body,
+    });
 
     const senderMail = await Mail.create({
       owner: req.user._id,
