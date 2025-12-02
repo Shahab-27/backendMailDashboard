@@ -56,12 +56,32 @@ exports.sendMail = async (req, res, next) => {
         .json({ message: 'Outgoing email service is not configured on the server' });
     }
 
-    await deliverMail({
+    console.log('[MAIL] sendMail called', {
+      user: req.user && req.user.email,
       to,
       subject,
-      text: body,
-      html: body,
     });
+
+    try {
+      const result = await deliverMail({
+        to,
+        subject,
+        text: body,
+        html: body,
+      });
+      console.log('[MAIL] deliverMail result:', {
+        messageId: result && result.messageId,
+        accepted: result && result.accepted,
+        rejected: result && result.rejected,
+        response: result && result.response,
+      });
+    } catch (sendError) {
+      console.error('[MAIL] Error while sending email via SMTP:', sendError);
+      return res.status(502).json({
+        message: 'Failed to send email via SMTP',
+        details: sendError.message,
+      });
+    }
 
     const senderMail = await Mail.create({
       owner: req.user._id,
