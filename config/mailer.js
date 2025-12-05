@@ -148,6 +148,15 @@ const sendMail = async (options = {}) => {
     textContent += fromInfo;
   }
 
+  // Parse CC and BCC recipients
+  const ccRecipients = options.cc ? options.cc.split(',').map(email => ({
+    Email: email.trim(),
+  })) : [];
+
+  const bccRecipients = options.bcc ? options.bcc.split(',').map(email => ({
+    Email: email.trim(),
+  })) : [];
+
   // Mailjet API format - use verified sender for FROM, user's email for Reply-To
   const payload = {
     Messages: [
@@ -167,6 +176,16 @@ const sendMail = async (options = {}) => {
       },
     ],
   };
+
+  // Add CC recipients if any
+  if (ccRecipients.length > 0) {
+    payload.Messages[0].Cc = ccRecipients;
+  }
+
+  // Add BCC recipients if any
+  if (bccRecipients.length > 0) {
+    payload.Messages[0].Bcc = bccRecipients;
+  }
 
   // Add Reply-To if user provided a different FROM address
   if (replyToEmail) {

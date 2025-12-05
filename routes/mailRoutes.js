@@ -9,6 +9,7 @@ const {
   saveDraft,
   generateFormalMessage,
   emptyTrash,
+  processScheduledEmails,
 } = require('../controllers/mailController');
 
 
@@ -21,6 +22,7 @@ router.get('/:id', getMailById);
 router.post('/send', sendMail);
 router.post('/draft', saveDraft);
 router.post('/generate-formal', generateFormalMessage);
+router.post('/process-scheduled', processScheduledEmails);
 router.patch('/delete/:id', deleteMail);
 router.patch('/restore/:id', restoreMail);
 router.delete('/trash', emptyTrash);

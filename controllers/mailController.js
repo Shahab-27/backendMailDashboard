@@ -44,7 +44,7 @@ exports.getMailById = async (req, res, next) => {
 
 exports.sendMail = async (req, res, next) => {
   try {
-    const { to, subject = '', body = '', draftId } = req.body;
+    const { to, cc = '', bcc = '', subject = '', body = '', htmlBody = '', scheduledAt, draftId } = req.body;
 
     if (!to) {
       return res.status(400).json({ message: 'Recipient email is required' });
@@ -56,22 +56,58 @@ exports.sendMail = async (req, res, next) => {
         .json({ message: 'Outgoing email service is not configured on the server' });
     }
 
+    // Check if this is a scheduled email
+    const isScheduled = scheduledAt && new Date(scheduledAt) > new Date();
+
     console.log('[MAIL] sendMail called', {
       user: req.user && req.user.email,
       userId: req.user && req.user._id,
       to,
+      cc,
+      bcc,
       subject,
       bodyLength: (body || '').length,
+      isScheduled,
+      scheduledAt,
       draftId,
     });
 
+    // If scheduled, save to database with scheduled flag
+    if (isScheduled) {
+      const scheduledMail = await Mail.create({
+        owner: req.user._id,
+        from: req.user.email,
+        to,
+        cc,
+        bcc,
+        subject,
+        body,
+        htmlBody,
+        scheduledAt: new Date(scheduledAt),
+        isScheduled: true,
+        folder: 'drafts', // Keep in drafts until sent
+      });
+
+      if (draftId) {
+        await Mail.deleteOne({ _id: draftId, owner: req.user._id, folder: 'drafts' });
+      }
+
+      return res.status(201).json({
+        ...scheduledMail.toObject(),
+        message: 'Email scheduled successfully',
+      });
+    }
+
+    // Send immediately
     try {
       const result = await deliverMail({
         to,
+        cc: cc || undefined,
+        bcc: bcc || undefined,
         subject,
         text: body,
-        html: body,
-        userFrom: req.user.email, // User's email from dashboard (will be used as Reply-To)
+        html: htmlBody || body,
+        userFrom: req.user.email,
       });
       console.log('[MAIL] deliverMail result (raw):', result);
     } catch (sendError) {
@@ -91,22 +127,35 @@ exports.sendMail = async (req, res, next) => {
       owner: req.user._id,
       from: req.user.email,
       to,
+      cc,
+      bcc,
       subject,
       body,
+      htmlBody,
       folder: 'sent',
     });
 
-    const recipient = await User.findOne({ email: to.toLowerCase() });
+    // Parse recipients (to, cc, bcc)
+    const recipients = [to];
+    if (cc) recipients.push(...cc.split(',').map(e => e.trim()));
+    if (bcc) recipients.push(...bcc.split(',').map(e => e.trim()));
 
-    if (recipient) {
-      await Mail.create({
-        owner: recipient._id,
-        from: req.user.email,
-        to,
-        subject,
-        body,
-        folder: 'inbox',
-      });
+    // Create inbox entries for recipients
+    for (const recipientEmail of recipients) {
+      const recipient = await User.findOne({ email: recipientEmail.toLowerCase() });
+      if (recipient) {
+        await Mail.create({
+          owner: recipient._id,
+          from: req.user.email,
+          to: recipientEmail,
+          cc: recipientEmail === to ? cc : undefined,
+          bcc: undefined, // BCC recipients shouldn't see each other
+          subject,
+          body,
+          htmlBody,
+          folder: 'inbox',
+        });
+      }
     }
 
     if (draftId) {
@@ -121,15 +170,24 @@ exports.sendMail = async (req, res, next) => {
 
 exports.saveDraft = async (req, res, next) => {
   try {
-    const { id, to = '', subject = '', body = '' } = req.body;
+    const { id, to = '', cc = '', bcc = '', subject = '', body = '', htmlBody = '', scheduledAt } = req.body;
     const payload = {
       owner: req.user._id,
       from: req.user.email,
       to,
+      cc,
+      bcc,
       subject,
       body,
+      htmlBody,
       folder: 'drafts',
     };
+
+    // If scheduled date is provided, add it
+    if (scheduledAt) {
+      payload.scheduledAt = new Date(scheduledAt);
+      payload.isScheduled = true;
+    }
 
     let draft;
     if (id) {
@@ -205,6 +263,86 @@ exports.emptyTrash = async (req, res, next) => {
     res.json({ 
       message: 'Trash emptied successfully',
       deletedCount: result.deletedCount 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Process scheduled emails (to be called by cron job)
+exports.processScheduledEmails = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const scheduledMails = await Mail.find({
+      isScheduled: true,
+      scheduledAt: { $lte: now },
+      folder: 'drafts',
+    }).populate('owner', 'email');
+
+    const results = {
+      processed: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    for (const mail of scheduledMails) {
+      try {
+        // Send the email
+        await deliverMail({
+          to: mail.to,
+          cc: mail.cc || undefined,
+          bcc: mail.bcc || undefined,
+          subject: mail.subject,
+          text: mail.body,
+          html: mail.htmlBody || mail.body,
+          userFrom: mail.from,
+        });
+
+        // Update mail status
+        mail.folder = 'sent';
+        mail.isScheduled = false;
+        mail.scheduledAt = null;
+        await mail.save();
+
+        // Create inbox entry for recipient
+        const recipient = await User.findOne({ email: mail.to.toLowerCase() });
+        if (recipient) {
+          const recipients = [mail.to];
+          if (mail.cc) recipients.push(...mail.cc.split(',').map(e => e.trim()));
+          if (mail.bcc) recipients.push(...mail.bcc.split(',').map(e => e.trim()));
+
+          for (const recipientEmail of recipients) {
+            const rec = await User.findOne({ email: recipientEmail.toLowerCase() });
+            if (rec) {
+              await Mail.create({
+                owner: rec._id,
+                from: mail.from,
+                to: recipientEmail,
+                cc: recipientEmail === mail.to ? mail.cc : undefined,
+                bcc: undefined,
+                subject: mail.subject,
+                body: mail.body,
+                htmlBody: mail.htmlBody,
+                folder: 'inbox',
+              });
+            }
+          }
+        }
+
+        results.processed++;
+      } catch (error) {
+        results.failed++;
+        results.errors.push({
+          mailId: mail._id,
+          error: error.message,
+        });
+        console.error(`[MAIL] Failed to send scheduled email ${mail._id}:`, error);
+      }
+    }
+
+    res.json({
+      message: 'Scheduled emails processed',
+      ...results,
     });
   } catch (error) {
     next(error);

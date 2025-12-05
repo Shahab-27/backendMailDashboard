@@ -19,6 +19,18 @@ const mailSchema = new mongoose.Schema(
       lowercase: true,
       default: '',
     },
+    cc: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: '',
+    },
+    bcc: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: '',
+    },
     subject: {
       type: String,
       default: '',
@@ -28,6 +40,18 @@ const mailSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+    },
+    htmlBody: {
+      type: String,
+      default: '',
+    },
+    scheduledAt: {
+      type: Date,
+      default: null,
+    },
+    isScheduled: {
+      type: Boolean,
+      default: false,
     },
     folder: {
       type: String,
