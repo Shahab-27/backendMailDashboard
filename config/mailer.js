@@ -102,28 +102,59 @@ const sendMail = async (options = {}) => {
     throw error;
   }
 
-  // Parse FROM address (can be "Name <email@example.com>" or just "email@example.com")
-  let fromEmail = fromDefault;
-  let fromName = 'Modern Mail';
+  // ALWAYS use verified sender for FROM (ensures delivery)
+  // Parse verified FROM address from env (must be verified in Mailjet)
+  let verifiedFromEmail = fromDefault;
+  let verifiedFromName = 'Modern Mail';
   
-  const fromAddress = options.from || fromDefault;
-  const fromMatch = fromAddress.match(/^(.+?)\s*<(.+?)>$|^(.+)$/);
-  if (fromMatch) {
-    if (fromMatch[2]) {
-      fromName = fromMatch[1].trim();
-      fromEmail = fromMatch[2].trim();
+  const verifiedFromMatch = fromDefault.match(/^(.+?)\s*<(.+?)>$|^(.+)$/);
+  if (verifiedFromMatch) {
+    if (verifiedFromMatch[2]) {
+      verifiedFromName = verifiedFromMatch[1].trim();
+      verifiedFromEmail = verifiedFromMatch[2].trim();
     } else {
-      fromEmail = fromMatch[3] || fromMatch[1] || fromDefault;
+      verifiedFromEmail = verifiedFromMatch[3] || verifiedFromMatch[1] || fromDefault;
     }
   }
 
-  // Mailjet API format
+  // User's desired FROM address (from dashboard) - use as Reply-To
+  const userDesiredFrom = options.userFrom || options.from;
+  let replyToEmail = null;
+  let replyToName = null;
+  
+  if (userDesiredFrom) {
+    const userFromMatch = userDesiredFrom.match(/^(.+?)\s*<(.+?)>$|^(.+)$/);
+    if (userFromMatch) {
+      if (userFromMatch[2]) {
+        replyToName = userFromMatch[1].trim();
+        replyToEmail = userFromMatch[2].trim();
+      } else {
+        replyToEmail = userFromMatch[3] || userFromMatch[1];
+      }
+    }
+  }
+
+  // Build email content - include user's FROM in body if different from verified sender
+  let htmlContent = options.html || `<pre>${options.text || ''}</pre>`;
+  let textContent = options.text || options.html || '';
+  
+  // If user wants a different FROM, add it to the email body
+  if (replyToEmail && replyToEmail !== verifiedFromEmail) {
+    const fromInfo = `\n\n---\nFrom: ${replyToName ? `${replyToName} ` : ''}<${replyToEmail}>`;
+    htmlContent = htmlContent.replace('</body>', `${fromInfo}</body>`).replace('</html>', `${fromInfo}</html>`);
+    if (!htmlContent.includes(fromInfo)) {
+      htmlContent += `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 12px;">${fromInfo}</div>`;
+    }
+    textContent += fromInfo;
+  }
+
+  // Mailjet API format - use verified sender for FROM, user's email for Reply-To
   const payload = {
     Messages: [
       {
         From: {
-          Email: fromEmail,
-          Name: fromName,
+          Email: verifiedFromEmail,  // Always use verified sender (ensures delivery)
+          Name: verifiedFromName,
         },
         To: [
           {
@@ -131,16 +162,25 @@ const sendMail = async (options = {}) => {
           },
         ],
         Subject: options.subject || '(No Subject)',
-        HTMLPart: options.html || `<pre>${options.text || ''}</pre>`,
-        TextPart: options.text || options.html || '',
+        HTMLPart: htmlContent,
+        TextPart: textContent,
       },
     ],
   };
 
+  // Add Reply-To if user provided a different FROM address
+  if (replyToEmail) {
+    payload.Messages[0].ReplyTo = {
+      Email: replyToEmail,
+      Name: replyToName || replyToEmail,
+    };
+  }
+
   console.log('[MAILER] Sending email via Mailjet', {
     to: options.to,
     subject: payload.Messages[0].Subject,
-    from: `${fromName} <${fromEmail}>`,
+    verifiedFrom: `${verifiedFromName} <${verifiedFromEmail}>`,
+    replyTo: replyToEmail ? `${replyToName || ''} <${replyToEmail}>` : 'none',
     htmlLength: (payload.Messages[0].HTMLPart || '').length,
   });
 

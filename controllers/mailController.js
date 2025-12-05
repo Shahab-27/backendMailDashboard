@@ -71,6 +71,7 @@ exports.sendMail = async (req, res, next) => {
         subject,
         text: body,
         html: body,
+        userFrom: req.user.email, // User's email from dashboard (will be used as Reply-To)
       });
       console.log('[MAIL] deliverMail result (raw):', result);
     } catch (sendError) {
