@@ -204,7 +204,7 @@ exports.generateFormalMessage = async (req, res, next) => {
     }
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDbosh5jfhGyAonmk3Li48528EwbNkhC7I';
-    const prompt = `i have to send mail ${message} give only the content in short and formal`;
+    const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
@@ -235,10 +235,20 @@ exports.generateFormalMessage = async (req, res, next) => {
       return res.status(response.status).json({ message: errorMessage });
     }
 
-    const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    let generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     if (generatedText) {
-      return res.json({ message: generatedText.trim() });
+      // Remove subject lines if they appear (lines starting with "Subject:" or "SUBJECT:")
+      generatedText = generatedText
+        .split('\n')
+        .filter(line => !line.trim().toLowerCase().startsWith('subject:'))
+        .join('\n')
+        .trim();
+      
+      // Remove any remaining subject patterns
+      generatedText = generatedText.replace(/^Subject:.*$/gmi, '').trim();
+      
+      return res.json({ message: generatedText });
     } else {
       console.error('Unexpected API response:', data);
       return res.status(500).json({ message: 'No response from AI' });
