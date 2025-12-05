@@ -25,23 +25,33 @@ const sendMail = async (options = {}) => {
   }
 
   const fromAddress = options.from || fromDefault;
-
-  console.log('[MAILER] Sending email via Resend', {
-    to: options.to,
-    subject: options.subject,
-    from: fromAddress,
-  });
-
-  const result = await resendClient.emails.send({
+  const payload = {
     from: fromAddress,
     to: options.to,
     subject: options.subject,
     html: options.html || `<pre>${options.text || ''}</pre>`,
+  };
+
+  console.log('[MAILER] Sending email via Resend', {
+    to: payload.to,
+    subject: payload.subject,
+    from: payload.from,
+    htmlLength: (payload.html || '').length,
   });
 
-  console.log('[MAILER] Resend response', result);
-
-  return result;
+  try {
+    const result = await resendClient.emails.send(payload);
+    console.log('[MAILER] Resend response', result);
+    return result;
+  } catch (err) {
+    console.error('[MAILER] Resend send error', {
+      name: err && err.name,
+      message: err && err.message,
+      statusCode: err && err.statusCode,
+      responseBody: err && err.response && err.response.body,
+    });
+    throw err;
+  }
 };
 
 module.exports = {
