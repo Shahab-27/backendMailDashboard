@@ -2,7 +2,7 @@ const Mail = require('../models/Mail');
 const User = require('../models/User');
 const { sendMail: deliverMail, isMailerConfigured } = require('../config/mailer');
 
-const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash', 'drafts'];
+const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash', 'drafts', 'scheduled'];
 
 exports.getMails = async (req, res, next) => {
   try {
@@ -12,11 +12,23 @@ exports.getMails = async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid folder' });
     }
 
-    const mails = await Mail.find({
+    let query = {
       owner: req.user._id,
-      folder,
-    })
-      .sort({ createdAt: -1 })
+    };
+
+    // For scheduled folder, show all scheduled emails (not yet sent)
+    if (folder === 'scheduled') {
+      query = {
+        owner: req.user._id,
+        isScheduled: true,
+        folder: 'scheduled',
+      };
+    } else {
+      query.folder = folder;
+    }
+
+    const mails = await Mail.find(query)
+      .sort(folder === 'scheduled' ? { scheduledAt: 1 } : { createdAt: -1 })
       .lean();
 
     res.json(mails);
@@ -85,11 +97,11 @@ exports.sendMail = async (req, res, next) => {
         htmlBody,
         scheduledAt: new Date(scheduledAt),
         isScheduled: true,
-        folder: 'drafts', // Keep in drafts until sent
+        folder: 'scheduled', // Store in scheduled folder
       });
 
       if (draftId) {
-        await Mail.deleteOne({ _id: draftId, owner: req.user._id, folder: 'drafts' });
+        await Mail.deleteOne({ _id: draftId, owner: req.user._id });
       }
 
       return res.status(201).json({
@@ -270,13 +282,22 @@ exports.emptyTrash = async (req, res, next) => {
 };
 
 // Process scheduled emails (to be called by cron job)
+// This endpoint doesn't require auth - it's for cron jobs
 exports.processScheduledEmails = async (req, res, next) => {
   try {
+    // Optional: Add a secret token check for security
+    const cronSecret = req.headers['x-cron-secret'] || req.body.secret;
+    if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
     const now = new Date();
+    // Find scheduled emails that are due (check emails scheduled up to 5 minutes ago to catch any missed)
+    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60000);
     const scheduledMails = await Mail.find({
       isScheduled: true,
-      scheduledAt: { $lte: now },
-      folder: 'drafts',
+      scheduledAt: { $lte: now, $gte: fiveMinutesAgo },
+      folder: 'scheduled',
     }).populate('owner', 'email');
 
     const results = {
@@ -298,7 +319,7 @@ exports.processScheduledEmails = async (req, res, next) => {
           userFrom: mail.from,
         });
 
-        // Update mail status
+        // Update mail status to sent
         mail.folder = 'sent';
         mail.isScheduled = false;
         mail.scheduledAt = null;

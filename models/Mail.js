@@ -55,7 +55,7 @@ const mailSchema = new mongoose.Schema(
     },
     folder: {
       type: String,
-      enum: ['inbox', 'sent', 'trash', 'drafts'],
+      enum: ['inbox', 'sent', 'trash', 'drafts', 'scheduled'],
       default: 'inbox',
     },
   },

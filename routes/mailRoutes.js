@@ -15,6 +15,9 @@ const {
 
 const router = express.Router();
 
+// Public endpoint for cron job (no auth required)
+router.post('/process-scheduled', processScheduledEmails);
+
 router.use(authMiddleware);
 
 router.get('/', getMails);
@@ -22,7 +25,6 @@ router.get('/:id', getMailById);
 router.post('/send', sendMail);
 router.post('/draft', saveDraft);
 router.post('/generate-formal', generateFormalMessage);
-router.post('/process-scheduled', processScheduledEmails);
 router.patch('/delete/:id', deleteMail);
 router.patch('/restore/:id', restoreMail);
 router.delete('/trash', emptyTrash);
