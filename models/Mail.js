@@ -53,6 +53,17 @@ const mailSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    attachments: {
+      type: [
+        {
+          url: String,
+          fileName: String,
+          fileSize: Number,
+          fileType: String,
+        },
+      ],
+      default: [],
+    },
     folder: {
       type: String,
       enum: ['inbox', 'sent', 'trash', 'drafts', 'scheduled'],

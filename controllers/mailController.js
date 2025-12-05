@@ -56,7 +56,7 @@ exports.getMailById = async (req, res, next) => {
 
 exports.sendMail = async (req, res, next) => {
   try {
-    const { to, cc = '', bcc = '', subject = '', body = '', htmlBody = '', scheduledAt, draftId } = req.body;
+    const { to, cc = '', bcc = '', subject = '', body = '', htmlBody = '', scheduledAt, attachments = [], draftId } = req.body;
 
     if (!to) {
       return res.status(400).json({ message: 'Recipient email is required' });
@@ -95,6 +95,7 @@ exports.sendMail = async (req, res, next) => {
         subject,
         body,
         htmlBody,
+        attachments,
         scheduledAt: new Date(scheduledAt),
         isScheduled: true,
         folder: 'scheduled', // Store in scheduled folder
@@ -120,6 +121,7 @@ exports.sendMail = async (req, res, next) => {
         text: body,
         html: htmlBody || body,
         userFrom: req.user.email,
+        attachments: attachments || [],
       });
       console.log('[MAIL] deliverMail result (raw):', result);
     } catch (sendError) {
@@ -144,6 +146,7 @@ exports.sendMail = async (req, res, next) => {
       subject,
       body,
       htmlBody,
+      attachments,
       folder: 'sent',
     });
 
@@ -165,6 +168,7 @@ exports.sendMail = async (req, res, next) => {
           subject,
           body,
           htmlBody,
+          attachments,
           folder: 'inbox',
         });
       }
@@ -317,6 +321,7 @@ exports.processScheduledEmails = async (req, res, next) => {
           text: mail.body,
           html: mail.htmlBody || mail.body,
           userFrom: mail.from,
+          attachments: mail.attachments || [],
         });
 
         // Update mail status to sent
@@ -335,17 +340,18 @@ exports.processScheduledEmails = async (req, res, next) => {
           for (const recipientEmail of recipients) {
             const rec = await User.findOne({ email: recipientEmail.toLowerCase() });
             if (rec) {
-              await Mail.create({
-                owner: rec._id,
-                from: mail.from,
-                to: recipientEmail,
-                cc: recipientEmail === mail.to ? mail.cc : undefined,
-                bcc: undefined,
-                subject: mail.subject,
-                body: mail.body,
-                htmlBody: mail.htmlBody,
-                folder: 'inbox',
-              });
+                await Mail.create({
+                  owner: rec._id,
+                  from: mail.from,
+                  to: recipientEmail,
+                  cc: recipientEmail === mail.to ? mail.cc : undefined,
+                  bcc: undefined,
+                  subject: mail.subject,
+                  body: mail.body,
+                  htmlBody: mail.htmlBody,
+                  attachments: mail.attachments || [],
+                  folder: 'inbox',
+                });
             }
           }
         }

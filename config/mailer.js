@@ -195,6 +195,38 @@ const sendMail = async (options = {}) => {
     };
   }
 
+  // Add attachments if any
+  if (options.attachments && options.attachments.length > 0) {
+    const attachmentPromises = options.attachments.map(async (attachment) => {
+      try {
+        // Download file from Cloudinary URL
+        const response = await fetch(attachment.url);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64Content = buffer.toString('base64');
+
+        // Get content type from response or use default
+        const contentType = response.headers.get('content-type') || 'application/octet-stream';
+
+        return {
+          ContentType: contentType,
+          Filename: attachment.fileName,
+          Base64Content: base64Content,
+        };
+      } catch (error) {
+        console.error(`[MAILER] Error processing attachment ${attachment.fileName}:`, error);
+        return null;
+      }
+    });
+
+    const attachments = await Promise.all(attachmentPromises);
+    const validAttachments = attachments.filter(att => att !== null);
+    
+    if (validAttachments.length > 0) {
+      payload.Messages[0].Attachments = validAttachments;
+    }
+  }
+
   console.log('[MAILER] Sending email via Mailjet', {
     to: options.to,
     subject: payload.Messages[0].Subject,
