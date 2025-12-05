@@ -7,7 +7,6 @@ const {
   deleteMail,
   restoreMail,
   saveDraft,
-  emptyTrash,
 } = require('../controllers/mailController');
 
 
@@ -21,7 +20,6 @@ router.post('/send', sendMail);
 router.post('/draft', saveDraft);
 router.patch('/delete/:id', deleteMail);
 router.patch('/restore/:id', restoreMail);
-router.delete('/trash', emptyTrash);
 
 module.exports = router;
 
