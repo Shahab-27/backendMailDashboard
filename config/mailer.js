@@ -19,6 +19,12 @@ if (smtpHost && smtpUser && smtpPass) {
       user: smtpUser,
       pass: smtpPass,
     },
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000, // 10 seconds
+    socketTimeout: 10000, // 10 seconds
+    tls: {
+      rejectUnauthorized: false, // Allow self-signed certificates if needed
+    },
   });
 
   transporter
@@ -32,7 +38,15 @@ if (smtpHost && smtpUser && smtpPass) {
         port: smtpPort,
         secure: smtpSecure,
         error: err && err.message,
+        code: err && err.code,
+        command: err && err.command,
       });
+      console.error('[MAILER] Troubleshooting tips:');
+      console.error('  1. Check if SMTP_PORT is correct (465 for SSL, 587 for STARTTLS)');
+      console.error('  2. Check if SMTP_SECURE matches the port (true for 465, false for 587)');
+      console.error('  3. Verify firewall/network allows outbound connections on port', smtpPort);
+      console.error('  4. Ensure Gmail App Password is correct (not regular password)');
+      console.error('  5. Try port 465 with SMTP_SECURE=true if 587 fails');
     });
 } else {
   console.warn(
