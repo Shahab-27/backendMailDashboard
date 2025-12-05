@@ -39,48 +39,95 @@ const sendMail = async (options = {}) => {
   });
 
   try {
-    // Mailget API endpoint - using HTTP Basic Auth
-    const apiUrl = 'https://api.mailget.com/send';
-    
-    // Create Basic Auth header (API key as username, empty or same as password)
-    const authHeader = Buffer.from(`${apiKey}:`).toString('base64');
-    
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${authHeader}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    // Try different possible Mailget API endpoints
+    const possibleEndpoints = [
+      'https://api.mailget.com/v1/send',
+      'https://api.mailget.com/send',
+      'https://mailget.com/api/send',
+      'https://api.formget.com/send', // Mailget might be part of FormGet
+    ];
 
-    const responseData = await response.json();
+    let lastError = null;
     
-    if (!response.ok) {
-      throw new Error(
-        responseData.message || 
-        responseData.error || 
-        `Mailget API error: ${response.status} ${response.statusText}`
-      );
+    for (const apiUrl of possibleEndpoints) {
+      try {
+        console.log('[MAILER] Trying endpoint:', apiUrl);
+        
+        // Create Basic Auth header (API key as username)
+        const authHeader = Buffer.from(`${apiKey}:`).toString('base64');
+        
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${authHeader}`,
+            'X-API-Key': apiKey, // Some APIs use header instead
+          },
+          body: JSON.stringify(payload),
+          timeout: 10000, // 10 second timeout
+        });
+
+        const responseText = await response.text();
+        let responseData;
+        
+        try {
+          responseData = JSON.parse(responseText);
+        } catch {
+          responseData = { raw: responseText };
+        }
+        
+        if (!response.ok) {
+          console.log('[MAILER] Endpoint failed:', {
+            url: apiUrl,
+            status: response.status,
+            statusText: response.statusText,
+            body: responseData,
+          });
+          lastError = new Error(
+            responseData.message || 
+            responseData.error || 
+            `Mailget API error: ${response.status} ${response.statusText}`
+          );
+          continue; // Try next endpoint
+        }
+
+        console.log('[MAILER] Mailget response', {
+          endpoint: apiUrl,
+          statusCode: response.status,
+          statusText: response.statusText,
+          data: responseData,
+        });
+
+        // Return a format similar to nodemailer for compatibility
+        return {
+          messageId: responseData.messageId || responseData.id || `mailget-${Date.now()}`,
+          accepted: [payload.to],
+          rejected: [],
+          response: `Mailget: ${response.status} ${response.statusText}`,
+        };
+      } catch (fetchErr) {
+        console.log('[MAILER] Endpoint error:', {
+          url: apiUrl,
+          error: fetchErr.message,
+          code: fetchErr.code,
+          cause: fetchErr.cause,
+        });
+        lastError = fetchErr;
+        continue; // Try next endpoint
+      }
     }
-
-    console.log('[MAILER] Mailget response', {
-      statusCode: response.status,
-      statusText: response.statusText,
-      data: responseData,
-    });
-
-    // Return a format similar to nodemailer for compatibility
-    return {
-      messageId: responseData.messageId || responseData.id || `mailget-${Date.now()}`,
-      accepted: [payload.to],
-      rejected: [],
-      response: `Mailget: ${response.status} ${response.statusText}`,
-    };
+    
+    // If all endpoints failed, throw the last error with more context
+    throw new Error(
+      `All Mailget API endpoints failed. Last error: ${lastError?.message || 'Unknown error'}. ` +
+      `Please check Mailget dashboard for the correct API endpoint and ensure SMTP is configured in Mailget.`
+    );
   } catch (err) {
     console.error('[MAILER] Mailget send error', {
       name: err && err.name,
       message: err && err.message,
+      code: err && err.code,
+      cause: err && err.cause,
       stack: err && err.stack,
     });
     throw err;
