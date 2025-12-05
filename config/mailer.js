@@ -1,80 +1,37 @@
-const nodemailer = require('nodemailer');
+// Mailget HTTP API configuration (works on Render and other cloud platforms).
+// Required env vars:
+// - MAILGET_API_KEY  (your Mailget API key)
+// - MAILGET_FROM     (optional, e.g. "Modern Mail <noreply@example.com>")
 
-// SMTP environment configuration (works with Gmail app password).
-const smtpHost = process.env.SMTP_HOST;
-const smtpPort = Number(process.env.SMTP_PORT || 465);
-const smtpSecure = String(process.env.SMTP_SECURE || 'true').toLowerCase() === 'true';
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-const fromDefault = process.env.SMTP_FROM || smtpUser;
+const apiKey = process.env.MAILGET_API_KEY;
+const fromDefault = process.env.MAILGET_FROM || 'noreply@mailget.com';
 
-let transporter = null;
+let isConfigured = false;
 
-if (smtpHost && smtpUser && smtpPass) {
-  transporter = nodemailer.createTransport({
-    host: smtpHost,
-    port: smtpPort,
-    secure: smtpSecure,
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-    connectionTimeout: 10000, // 10 seconds
-    greetingTimeout: 10000, // 10 seconds
-    socketTimeout: 10000, // 10 seconds
-    tls: {
-      rejectUnauthorized: false, // Allow self-signed certificates if needed
-    },
-  });
-
-  transporter
-    .verify()
-    .then(() => {
-      console.log('[MAILER] SMTP transporter verified for', smtpUser);
-    })
-    .catch((err) => {
-      console.error('[MAILER] SMTP verify failed', {
-        host: smtpHost,
-        port: smtpPort,
-        secure: smtpSecure,
-        error: err && err.message,
-        code: err && err.code,
-        command: err && err.command,
-      });
-      console.error('[MAILER] Troubleshooting tips:');
-      console.error('  1. Check if SMTP_PORT is correct (465 for SSL, 587 for STARTTLS)');
-      console.error('  2. Check if SMTP_SECURE matches the port (true for 465, false for 587)');
-      console.error('  3. Verify firewall/network allows outbound connections on port', smtpPort);
-      console.error('  4. Ensure Gmail App Password is correct (not regular password)');
-      console.error('  5. Try port 465 with SMTP_SECURE=true if 587 fails');
-    });
+if (apiKey) {
+  isConfigured = true;
+  console.log('[MAILER] Mailget client initialized');
 } else {
-  console.warn(
-    '[MAILER] SMTP is not fully configured. Please set SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS.'
-  );
+  console.warn('[MAILER] MAILGET_API_KEY is missing; outgoing email disabled');
 }
 
 const sendMail = async (options = {}) => {
-  if (!transporter) {
-    const error = new Error('SMTP transporter is not configured');
+  if (!isConfigured) {
+    const error = new Error('Mailget is not configured');
     error.statusCode = 500;
     throw error;
   }
 
   const fromAddress = options.from || fromDefault;
   const payload = {
-    from: fromAddress,
     to: options.to,
-    subject: options.subject,
+    subject: options.subject || '(No Subject)',
     html: options.html || `<pre>${options.text || ''}</pre>`,
     text: options.text || options.html,
+    from: fromAddress,
   };
 
-  console.log('[MAILER] Sending email via SMTP', {
-    host: smtpHost,
-    port: smtpPort,
-    secure: smtpSecure,
-    user: smtpUser,
+  console.log('[MAILER] Sending email via Mailget', {
     to: payload.to,
     subject: payload.subject,
     from: payload.from,
@@ -82,21 +39,49 @@ const sendMail = async (options = {}) => {
   });
 
   try {
-    const info = await transporter.sendMail(payload);
-    console.log('[MAILER] SMTP send result', {
-      messageId: info && info.messageId,
-      response: info && info.response,
-      accepted: info && info.accepted,
-      rejected: info && info.rejected,
+    // Mailget API endpoint - using HTTP Basic Auth
+    const apiUrl = 'https://api.mailget.com/send';
+    
+    // Create Basic Auth header (API key as username, empty or same as password)
+    const authHeader = Buffer.from(`${apiKey}:`).toString('base64');
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${authHeader}`,
+      },
+      body: JSON.stringify(payload),
     });
-    return info;
+
+    const responseData = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(
+        responseData.message || 
+        responseData.error || 
+        `Mailget API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    console.log('[MAILER] Mailget response', {
+      statusCode: response.status,
+      statusText: response.statusText,
+      data: responseData,
+    });
+
+    // Return a format similar to nodemailer for compatibility
+    return {
+      messageId: responseData.messageId || responseData.id || `mailget-${Date.now()}`,
+      accepted: [payload.to],
+      rejected: [],
+      response: `Mailget: ${response.status} ${response.statusText}`,
+    };
   } catch (err) {
-    console.error('[MAILER] SMTP send error', {
+    console.error('[MAILER] Mailget send error', {
       name: err && err.name,
       message: err && err.message,
-      code: err && err.code,
-      command: err && err.command,
-      response: err && err.response,
+      stack: err && err.stack,
     });
     throw err;
   }
@@ -104,6 +89,5 @@ const sendMail = async (options = {}) => {
 
 module.exports = {
   sendMail,
-  isMailerConfigured: !!transporter,
+  isMailerConfigured: isConfigured,
 };
-
