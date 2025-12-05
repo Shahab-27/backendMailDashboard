@@ -195,6 +195,22 @@ exports.restoreMail = async (req, res, next) => {
   }
 };
 
+exports.emptyTrash = async (req, res, next) => {
+  try {
+    const result = await Mail.deleteMany({
+      owner: req.user._id,
+      folder: 'trash',
+    });
+
+    res.json({ 
+      message: 'Trash emptied successfully',
+      deletedCount: result.deletedCount 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.generateFormalMessage = async (req, res, next) => {
   try {
     const { message } = req.body;
@@ -238,15 +254,45 @@ exports.generateFormalMessage = async (req, res, next) => {
     let generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     if (generatedText) {
-      // Remove subject lines if they appear (lines starting with "Subject:" or "SUBJECT:")
+      // Split into lines for processing
+      let lines = generatedText.split('\n');
+      
+      // Remove lines that contain "Subject:" anywhere (case-insensitive)
+      lines = lines.filter(line => {
+        const lowerLine = line.trim().toLowerCase();
+        // Remove lines that start with "subject:" or contain "subject:" followed by content
+        if (lowerLine.startsWith('subject:') || lowerLine.match(/^subject\s*:/i)) {
+          return false;
+        }
+        // Remove lines that are just "Subject:" or variations
+        if (lowerLine === 'subject:' || lowerLine === 'subject') {
+          return false;
+        }
+        return true;
+      });
+      
+      // Join back and remove any remaining subject patterns using regex
+      generatedText = lines.join('\n');
+      
+      // Remove subject patterns more aggressively (handles various formats)
       generatedText = generatedText
+        .replace(/^Subject\s*:.*$/gmi, '') // Lines starting with "Subject:"
+        .replace(/^SUBJECT\s*:.*$/gmi, '') // Lines starting with "SUBJECT:"
+        .replace(/^subject\s*:.*$/gmi, '') // Lines starting with "subject:"
+        .replace(/Subject\s*:.*$/gmi, '') // Any line containing "Subject:"
+        .replace(/SUBJECT\s*:.*$/gmi, '') // Any line containing "SUBJECT:"
+        .replace(/subject\s*:.*$/gmi, '') // Any line containing "subject:"
         .split('\n')
-        .filter(line => !line.trim().toLowerCase().startsWith('subject:'))
+        .map(line => line.trim())
+        .filter(line => {
+          // Remove empty lines and lines that are just "Subject:" variations
+          if (!line) return false;
+          const lower = line.toLowerCase();
+          if (lower.startsWith('subject') && lower.includes(':')) return false;
+          return true;
+        })
         .join('\n')
         .trim();
-      
-      // Remove any remaining subject patterns
-      generatedText = generatedText.replace(/^Subject:.*$/gmi, '').trim();
       
       return res.json({ message: generatedText });
     } else {

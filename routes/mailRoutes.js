@@ -8,6 +8,7 @@ const {
   restoreMail,
   saveDraft,
   generateFormalMessage,
+  emptyTrash,
 } = require('../controllers/mailController');
 
 
@@ -22,6 +23,7 @@ router.post('/draft', saveDraft);
 router.post('/generate-formal', generateFormalMessage);
 router.patch('/delete/:id', deleteMail);
 router.patch('/restore/:id', restoreMail);
+router.delete('/trash', emptyTrash);
 
 module.exports = router;
 
