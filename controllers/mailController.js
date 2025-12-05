@@ -191,3 +191,19 @@ exports.restoreMail = async (req, res, next) => {
   }
 };
 
+exports.emptyTrash = async (req, res, next) => {
+  try {
+    const result = await Mail.deleteMany({
+      owner: req.user._id,
+      folder: 'trash',
+    });
+
+    res.json({
+      message: 'Trash emptied successfully',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
