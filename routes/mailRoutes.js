@@ -7,6 +7,7 @@ const {
   deleteMail,
   restoreMail,
   saveDraft,
+  generateFormalMessage,
 } = require('../controllers/mailController');
 
 
@@ -18,6 +19,7 @@ router.get('/', getMails);
 router.get('/:id', getMailById);
 router.post('/send', sendMail);
 router.post('/draft', saveDraft);
+router.post('/generate-formal', generateFormalMessage);
 router.patch('/delete/:id', deleteMail);
 router.patch('/restore/:id', restoreMail);
 

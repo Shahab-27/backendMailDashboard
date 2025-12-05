@@ -195,3 +195,78 @@ exports.restoreMail = async (req, res, next) => {
   }
 };
 
+exports.generateFormalMessage = async (req, res, next) => {
+  try {
+    const { message } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ message: 'Message is required' });
+    }
+
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDbosh5jfhGyAonmk3Li48528EwbNkhC7I';
+    const prompt = `i have to send mail ${message} give only the content in short and formal`;
+
+    // Try different model names
+    const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+    
+    for (const model of models) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    {
+                      text: prompt,
+                    },
+                  ],
+                },
+              ],
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          // If it's a model-specific error, try next model
+          if (data.error?.message?.includes('model') || data.error?.status === 'NOT_FOUND') {
+            console.warn(`Model ${model} not available, trying next...`);
+            continue;
+          }
+          const errorMessage = data.error?.message || data.message || 'Failed to generate message';
+          console.error('Gemini API Error:', data);
+          return res.status(response.status).json({ message: errorMessage });
+        }
+
+        const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        if (generatedText) {
+          return res.json({ message: generatedText.trim() });
+        } else {
+          console.error('Unexpected API response:', data);
+          return res.status(500).json({ message: 'No response from AI' });
+        }
+      } catch (error) {
+        // If this is the last model, throw the error
+        if (model === models[models.length - 1]) {
+          console.error('AI Generation Error:', error);
+          return res.status(500).json({ 
+            message: error.message || 'Failed to generate formal message' 
+          });
+        }
+        // Otherwise, continue to next model
+        continue;
+      }
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
