@@ -61,17 +61,30 @@ exports.uploadFile = async (req, res, next) => {
     });
     const uploadDuration = Date.now() - uploadStartTime;
 
-    console.log('[UPLOAD] Cloudinary upload successful', {
+    console.log('[UPLOAD] ✅ Cloudinary upload SUCCESSFUL', {
       fileName: fileName,
       publicId: result.public_id,
       secureUrl: result.secure_url,
       fileSize: result.bytes,
+      fileSizeFormatted: `${(result.bytes / 1024).toFixed(2)} KB`,
       fileType: result.resource_type,
       format: result.format,
       width: result.width,
       height: result.height,
       uploadDuration: `${uploadDuration}ms`,
       uploadedAt: new Date().toISOString(),
+      folder: result.folder || 'mail-attachments',
+      version: result.version,
+      signature: result.signature ? result.signature.substring(0, 10) + '...' : 'N/A',
+    });
+    
+    console.log('[UPLOAD] 📎 File successfully uploaded to Cloudinary:', {
+      'File Name': fileName,
+      'Cloudinary URL': result.secure_url,
+      'Public ID': result.public_id,
+      'File Size': `${(result.bytes / 1024).toFixed(2)} KB`,
+      'Upload Time': `${uploadDuration}ms`,
+      'Status': 'SUCCESS',
     });
 
     const responseData = {
@@ -174,15 +187,28 @@ exports.uploadMultipleFiles = async (req, res, next) => {
         });
         const fileUploadDuration = Date.now() - fileUploadStartTime;
 
-        console.log(`[UPLOAD] File ${index + 1}/${files.length} uploaded successfully to Cloudinary`, {
+        console.log(`[UPLOAD] ✅ File ${index + 1}/${files.length} uploaded SUCCESSFULLY to Cloudinary`, {
           fileName: file.fileName,
           publicId: result.public_id,
           secureUrl: result.secure_url,
           fileSize: result.bytes,
+          fileSizeFormatted: `${(result.bytes / 1024).toFixed(2)} KB`,
           fileType: result.resource_type,
           format: result.format,
+          width: result.width,
+          height: result.height,
           uploadDuration: `${fileUploadDuration}ms`,
           uploadedAt: new Date().toISOString(),
+          folder: result.folder || 'mail-attachments',
+        });
+        
+        console.log(`[UPLOAD] 📎 File ${index + 1}/${files.length} successfully uploaded:`, {
+          'File Name': file.fileName,
+          'Cloudinary URL': result.secure_url,
+          'Public ID': result.public_id,
+          'File Size': `${(result.bytes / 1024).toFixed(2)} KB`,
+          'Upload Time': `${fileUploadDuration}ms`,
+          'Status': 'SUCCESS',
         });
 
         return {
