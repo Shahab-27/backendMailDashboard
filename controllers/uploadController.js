@@ -28,13 +28,34 @@ exports.uploadFile = async (req, res, next) => {
 
     console.log('[UPLOAD] Cloudinary configuration check', {
       hasCloudName: !!cloudName,
+      cloudNamePreview: cloudName ? `${cloudName.substring(0, 4)}...` : 'missing',
       hasApiKey: !!apiKey,
       hasApiSecret: !!apiSecret,
     });
 
     if (!cloudName || !apiKey || !apiSecret) {
-      console.error('[UPLOAD] Cloudinary credentials missing');
-      return res.status(500).json({ message: 'Cloudinary is not configured on the server' });
+      console.error('[UPLOAD] Cloudinary credentials missing', {
+        missingCloudName: !cloudName,
+        missingApiKey: !apiKey,
+        missingApiSecret: !apiSecret,
+      });
+      return res.status(500).json({ 
+        message: 'Cloudinary is not configured on the server',
+        details: 'Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_SECRET_KEY environment variables'
+      });
+    }
+
+    // Validate cloud_name format (must be lowercase alphanumeric with hyphens)
+    const cloudNamePattern = /^[a-z0-9-]+$/;
+    if (!cloudNamePattern.test(cloudName)) {
+      console.error('[UPLOAD] Invalid cloud_name format', {
+        cloudName: cloudName,
+        error: 'Cloud name must be lowercase alphanumeric characters and hyphens only',
+      });
+      return res.status(500).json({ 
+        message: 'Invalid Cloudinary cloud name format',
+        details: `Cloud name "${cloudName}" is invalid. Cloud names must be lowercase alphanumeric characters and hyphens only (e.g., "my-cloud-name"). Please check your CLOUDINARY_CLOUD_NAME environment variable.`
+      });
     }
 
     cloudinary.config({
@@ -141,13 +162,34 @@ exports.uploadMultipleFiles = async (req, res, next) => {
 
     console.log('[UPLOAD] Cloudinary configuration check for multiple files', {
       hasCloudName: !!cloudName,
+      cloudNamePreview: cloudName ? `${cloudName.substring(0, 4)}...` : 'missing',
       hasApiKey: !!apiKey,
       hasApiSecret: !!apiSecret,
     });
 
     if (!cloudName || !apiKey || !apiSecret) {
-      console.error('[UPLOAD] Cloudinary credentials missing for multiple files');
-      return res.status(500).json({ message: 'Cloudinary is not configured on the server' });
+      console.error('[UPLOAD] Cloudinary credentials missing for multiple files', {
+        missingCloudName: !cloudName,
+        missingApiKey: !apiKey,
+        missingApiSecret: !apiSecret,
+      });
+      return res.status(500).json({ 
+        message: 'Cloudinary is not configured on the server',
+        details: 'Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_SECRET_KEY environment variables'
+      });
+    }
+
+    // Validate cloud_name format (must be lowercase alphanumeric with hyphens)
+    const cloudNamePattern = /^[a-z0-9-]+$/;
+    if (!cloudNamePattern.test(cloudName)) {
+      console.error('[UPLOAD] Invalid cloud_name format for multiple files', {
+        cloudName: cloudName,
+        error: 'Cloud name must be lowercase alphanumeric characters and hyphens only',
+      });
+      return res.status(500).json({ 
+        message: 'Invalid Cloudinary cloud name format',
+        details: `Cloud name "${cloudName}" is invalid. Cloud names must be lowercase alphanumeric characters and hyphens only (e.g., "my-cloud-name"). Please check your CLOUDINARY_CLOUD_NAME environment variable.`
+      });
     }
 
     cloudinary.config({
@@ -219,7 +261,7 @@ exports.uploadMultipleFiles = async (req, res, next) => {
           fileType: result.resource_type,
         };
       } catch (error) {
-        console.error(`[UPLOAD] Error uploading file ${index + 1}/${files.length} (${file.fileName}) to Cloudinary`, {
+        console.error(`[UPLOAD] ❌ Error uploading file ${index + 1}/${files.length} (${file.fileName}) to Cloudinary`, {
           fileName: file.fileName,
           errorName: error?.name,
           errorMessage: error?.message,
@@ -227,6 +269,21 @@ exports.uploadMultipleFiles = async (req, res, next) => {
           errorResponse: error?.response,
           errorStack: error?.stack,
         });
+
+        // Log specific error details for common issues
+        if (error?.message?.includes('Invalid cloud_name')) {
+          console.error(`[UPLOAD] ⚠️  CLOUD_NAME VALIDATION ERROR:`, {
+            providedCloudName: process.env.CLOUDINARY_CLOUD_NAME,
+            error: 'The cloud_name must be a valid Cloudinary cloud name (lowercase, alphanumeric, hyphens only)',
+            help: 'Check your CLOUDINARY_CLOUD_NAME environment variable. It should match your Cloudinary dashboard cloud name.',
+          });
+        } else if (error?.http_code === 401) {
+          console.error(`[UPLOAD] ⚠️  AUTHENTICATION ERROR:`, {
+            error: 'Invalid API credentials or cloud name',
+            help: 'Verify your CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_SECRET_KEY are correct',
+          });
+        }
+
         return null;
       }
     });
@@ -253,13 +310,30 @@ exports.uploadMultipleFiles = async (req, res, next) => {
       successful: successfulUploads.length,
     });
   } catch (error) {
-    console.error('[UPLOAD] Multiple files upload error', {
+    console.error('[UPLOAD] ❌ Multiple files upload error', {
       errorName: error?.name,
       errorMessage: error?.message,
       errorStack: error?.stack,
       filesCount: req.body?.files?.length || 0,
     });
-    res.status(500).json({ message: 'Failed to upload files', error: error.message });
+
+    // Provide helpful error messages for common issues
+    let errorDetails = error.message;
+    if (error?.message?.includes('Invalid cloud_name')) {
+      errorDetails = `Invalid cloud name "${process.env.CLOUDINARY_CLOUD_NAME}". Cloud names must be lowercase alphanumeric characters and hyphens only. Please check your CLOUDINARY_CLOUD_NAME environment variable.`;
+      console.error('[UPLOAD] ⚠️  CLOUD_NAME ERROR:', {
+        providedCloudName: process.env.CLOUDINARY_CLOUD_NAME,
+        help: 'The cloud_name should match exactly what you see in your Cloudinary dashboard',
+      });
+    } else if (error?.http_code === 401) {
+      errorDetails = 'Authentication failed. Please verify your Cloudinary credentials are correct.';
+    }
+
+    res.status(500).json({ 
+      message: 'Failed to upload files', 
+      error: errorDetails,
+      httpCode: error?.http_code,
+    });
   }
 };
 

@@ -135,15 +135,84 @@ const sendMail = async (options = {}) => {
   }
 
   // Build email content - include user's FROM in body if different from verified sender
-  let htmlContent = options.html || `<pre>${options.text || ''}</pre>`;
+  // Wrap content in proper HTML with larger font size for better readability
+  const baseHtmlStyle = `
+    <style>
+      body { 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        color: #333333;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      p { 
+        font-size: 16px;
+        line-height: 1.6;
+        margin: 0 0 12px 0;
+      }
+      pre {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        color: #333333;
+        background: transparent;
+        border: none;
+        padding: 0;
+        margin: 0;
+      }
+      div {
+        font-size: 16px;
+        line-height: 1.6;
+      }
+    </style>
+  `;
+
+  let htmlContent = options.html || '';
+  
+  // If no HTML provided, convert plain text to HTML with proper styling
+  if (!htmlContent && options.text) {
+    // Convert newlines to <br> and wrap in styled div
+    htmlContent = `<div style="font-size: 16px; line-height: 1.6; color: #333333;">${options.text.replace(/\n/g, '<br>')}</div>`;
+  } else if (htmlContent && !htmlContent.includes('<html')) {
+    // If HTML is provided but not wrapped, wrap it properly
+    htmlContent = `<div style="font-size: 16px; line-height: 1.6; color: #333333;">${htmlContent}</div>`;
+  }
+  
+  // Wrap in full HTML document with proper styling
+  if (!htmlContent.includes('<html')) {
+    htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${baseHtmlStyle}
+      </head>
+      <body>
+        ${htmlContent}
+      </body>
+      </html>
+    `;
+  } else {
+    // Inject styles into existing HTML
+    htmlContent = htmlContent.replace('</head>', `${baseHtmlStyle}</head>`);
+    if (!htmlContent.includes('<head>')) {
+      htmlContent = htmlContent.replace('<html>', `<html><head>${baseHtmlStyle}</head>`);
+    }
+  }
+  
   let textContent = options.text || options.html || '';
   
   // If user wants a different FROM, add it to the email body
   if (replyToEmail && replyToEmail !== verifiedFromEmail) {
     const fromInfo = `\n\n---\nFrom: ${replyToName ? `${replyToName} ` : ''}<${replyToEmail}>`;
-    htmlContent = htmlContent.replace('</body>', `${fromInfo}</body>`).replace('</html>', `${fromInfo}</html>`);
+    htmlContent = htmlContent.replace('</body>', `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">${fromInfo}</div></body>`).replace('</html>', `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">${fromInfo}</div></html>`);
     if (!htmlContent.includes(fromInfo)) {
-      htmlContent += `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 12px;">${fromInfo}</div>`;
+      htmlContent = htmlContent.replace('</body>', `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">${fromInfo}</div></body>`);
     }
     textContent += fromInfo;
   }

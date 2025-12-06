@@ -3,6 +3,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
+const { processScheduledEmails } = require('./controllers/mailController');
 
 dotenv.config();
 
@@ -14,6 +15,28 @@ const app = express();
 
 // Database
 connectDB();
+
+// Set up automatic scheduled email processing (runs every minute)
+setInterval(async () => {
+  try {
+    const req = { body: {}, headers: {} };
+    const res = {
+      json: (data) => {
+        if (data.processed > 0 || data.failed > 0) {
+          console.log('[CRON] Scheduled emails processed:', data);
+        }
+      },
+      status: () => res,
+    };
+    const next = () => {};
+    
+    await processScheduledEmails(req, res, next);
+  } catch (error) {
+    console.error('[CRON] Error processing scheduled emails:', error);
+  }
+}, 60000); // Run every minute
+
+console.log('[CRON] Scheduled email processor started (runs every minute)');
 
 // Middleware
 app.use(cors());
