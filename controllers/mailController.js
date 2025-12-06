@@ -79,6 +79,8 @@ exports.sendMail = async (req, res, next) => {
       bcc,
       subject,
       bodyLength: (body || '').length,
+      htmlBodyLength: (htmlBody || '').length,
+      attachmentsCount: attachments ? attachments.length : 0,
       isScheduled,
       scheduledAt,
       draftId,
@@ -159,7 +161,7 @@ exports.sendMail = async (req, res, next) => {
     for (const recipientEmail of recipients) {
       const recipient = await User.findOne({ email: recipientEmail.toLowerCase() });
       if (recipient) {
-        await Mail.create({
+        const inboxMail = await Mail.create({
           owner: recipient._id,
           from: req.user.email,
           to: recipientEmail,
@@ -170,6 +172,15 @@ exports.sendMail = async (req, res, next) => {
           htmlBody,
           attachments,
           folder: 'inbox',
+        });
+        
+        console.log('[MAIL] Email saved to recipient inbox', {
+          recipientEmail: recipientEmail,
+          mailId: inboxMail._id,
+          bodyLength: (inboxMail.body || '').length,
+          htmlBodyLength: (inboxMail.htmlBody || '').length,
+          attachmentsCount: inboxMail.attachments ? inboxMail.attachments.length : 0,
+          subject: inboxMail.subject,
         });
       }
     }
