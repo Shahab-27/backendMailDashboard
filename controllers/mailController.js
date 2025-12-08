@@ -396,12 +396,17 @@ exports.generateFormalMessage = async (req, res, next) => {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDbosh5jfhGyAonmk3Li48528EwbNkhC7I';
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your-api-key-here') {
-      console.error('[AI] GEMINI_API_KEY is not configured');
-      return res.status(500).json({ message: 'AI service is not configured' });
+      console.error('[AI] GEMINI_API_KEY is not configured in environment variables');
+      return res.status(500).json({ 
+        message: 'AI service is not configured. Please set GEMINI_API_KEY in your .env file.' 
+      });
     }
+
+    // Log API key status (first 10 chars only for security)
+    console.log('[AI] Using API key:', GEMINI_API_KEY.substring(0, 10) + '...');
 
     const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
@@ -449,8 +454,33 @@ exports.generateFormalMessage = async (req, res, next) => {
           const quotaError = errorData?.error;
           let userMessage = 'AI service quota exceeded. ';
           
-          if (quotaError?.message) {
-            // Extract retry time if available
+          // Check if it's a free tier quota issue
+          const isFreeTierQuota = quotaError?.message?.includes('free_tier') || 
+                                  quotaError?.message?.includes('limit: 0');
+          
+          if (isFreeTierQuota) {
+            userMessage = 'The free tier quota for Gemini API has been exhausted. ';
+            userMessage += 'To continue using AI features, please:\n';
+            userMessage += '1. Enable billing on your Google Cloud account\n';
+            userMessage += '2. Or wait for the quota to reset (usually daily)\n';
+            userMessage += '3. Check your quota at: https://ai.dev/usage?tab=rate-limit';
+            
+            if (quotaError?.message) {
+              const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
+              if (retryMatch) {
+                const seconds = Math.ceil(parseFloat(retryMatch[1]));
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                
+                if (minutes > 0) {
+                  userMessage += `\n\nQuota will reset in approximately ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
+                } else {
+                  userMessage += `\n\nQuota will reset in approximately ${seconds} second${seconds > 1 ? 's' : ''}.`;
+                }
+              }
+            }
+          } else if (quotaError?.message) {
+            // Regular rate limit with retry time
             const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
             if (retryMatch) {
               const seconds = Math.ceil(parseFloat(retryMatch[1]));
@@ -468,6 +498,11 @@ exports.generateFormalMessage = async (req, res, next) => {
           } else {
             userMessage += 'Please try again later.';
           }
+          
+          console.error('[AI] Quota exceeded details:', {
+            isFreeTier: isFreeTierQuota,
+            errorMessage: quotaError?.message
+          });
           
           return res.status(429).json({ 
             message: userMessage 
