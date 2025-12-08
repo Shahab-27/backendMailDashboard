@@ -410,98 +410,63 @@ exports.generateFormalMessage = async (req, res, next) => {
 
     const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
-    // List of models to try in order (fallback if first one fails)
-    const models = [
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro',
-      'gemini-pro'
-    ];
+    // Use only gemini-2.0-flash model
+    const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+    const apiUrl = `${API_URL}?key=${GEMINI_API_KEY}`;
 
     console.log('[AI] Sending request to Gemini API...');
     console.log('[AI] Request payload:', JSON.stringify({
-      model: models[0],
+      model: 'gemini-2.0-flash',
       promptLength: prompt.length
     }, null, 2));
+    console.log(`[AI] API URL: ${apiUrl.replace(GEMINI_API_KEY, 'API_KEY_HIDDEN')}`);
     
     let response;
     let responseData;
-    let lastError = null;
-    let modelUsed = null;
     
-    // Try each model until one works
-    for (const model of models) {
-      try {
-        const startTime = Date.now();
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-        
-        console.log(`[AI] Trying model: ${model}`);
-        console.log(`[AI] API URL: ${apiUrl.replace(GEMINI_API_KEY, 'API_KEY_HIDDEN')}`);
-        
-        response = await axios.post(
-          apiUrl,
-          {
-            contents: [
-              {
-                parts: [
-                  {
-                    text: prompt,
-                  },
-                ],
-              },
-            ],
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        const endTime = Date.now();
-        const duration = endTime - startTime;
-
-        responseData = response.data;
-        modelUsed = model;
-        
-        console.log(`[AI] Successfully received response from model: ${model}`);
-        console.log('[AI] Response status:', response.status);
-        console.log('[AI] Response time:', duration + 'ms');
-        console.log('[AI] Response structure:', JSON.stringify({
-          hasCandidates: !!responseData.candidates,
-          candidatesLength: responseData.candidates?.length || 0,
-          hasContent: !!responseData.candidates?.[0]?.content,
-          hasParts: !!responseData.candidates?.[0]?.content?.parts,
-          hasText: !!responseData.candidates?.[0]?.content?.parts?.[0]?.text
-        }, null, 2));
-        
-        // If we got here, the request was successful, break out of the loop
-        break;
-        
-      } catch (modelError) {
-        lastError = modelError;
-        console.warn(`[AI] Model ${model} failed:`, modelError.response?.status || modelError.message);
-        
-        // If it's not a 429 or 404 (model not found), don't try other models
-        if (modelError.response?.status && modelError.response.status !== 429 && modelError.response.status !== 404) {
-          console.error(`[AI] Non-retryable error for model ${model}, stopping fallback attempts`);
-          break;
-        }
-        
-        // If this is the last model, we'll handle the error below
-        if (model === models[models.length - 1]) {
-          console.error('[AI] All models failed, using last error');
-        } else {
-          console.log(`[AI] Trying next model...`);
-        }
-      }
-    }
-    
-    // If we don't have a successful response, handle the error
-    if (!response || !responseData) {
-      const axiosError = lastError;
+    try {
+      const startTime = Date.now();
       
-      if (!axiosError) {
+      response = await axios.post(
+        apiUrl,
+        {
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+
+      responseData = response.data;
+      
+      console.log(`[AI] Successfully received response from model: gemini-2.0-flash`);
+      console.log('[AI] Response status:', response.status);
+      console.log('[AI] Response time:', duration + 'ms');
+      console.log('[AI] Response structure:', JSON.stringify({
+        hasCandidates: !!responseData.candidates,
+        candidatesLength: responseData.candidates?.length || 0,
+        hasContent: !!responseData.candidates?.[0]?.content,
+        hasParts: !!responseData.candidates?.[0]?.content?.parts,
+        hasText: !!responseData.candidates?.[0]?.content?.parts?.[0]?.text
+      }, null, 2));
+      
+    } catch (axiosError) {
+      // If we don't have a successful response, handle the error
+      if (!response || !responseData) {
+        if (!axiosError) {
         return res.status(500).json({ 
           message: 'Failed to connect to AI service. No error details available.' 
         });
@@ -606,6 +571,7 @@ exports.generateFormalMessage = async (req, res, next) => {
           message: `Failed to connect to AI service: ${axiosError.message}` 
         });
       }
+      }
     }
 
     // Extract generated text from Gemini response
@@ -619,7 +585,7 @@ exports.generateFormalMessage = async (req, res, next) => {
     }
 
     if (generatedText) {
-      console.log(`[AI] Successfully generated text using model: ${modelUsed || 'unknown'}`);
+      console.log(`[AI] Successfully generated text using model: gemini-2.0-flash`);
       console.log('[AI] Generated text length:', generatedText.length);
       console.log('[AI] Generated text preview:', generatedText.substring(0, 100) + '...');
       
