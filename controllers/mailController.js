@@ -1,5 +1,6 @@
 const Mail = require('../models/Mail');
 const User = require('../models/User');
+const axios = require('axios');
 const { sendMail: deliverMail, isMailerConfigured } = require('../config/mailer');
 
 const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash', 'drafts', 'scheduled'];
@@ -396,16 +397,22 @@ exports.generateFormalMessage = async (req, res, next) => {
     }
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDbosh5jfhGyAonmk3Li48528EwbNkhC7I';
+    
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your-api-key-here') {
+      console.error('[AI] GEMINI_API_KEY is not configured');
+      return res.status(500).json({ message: 'AI service is not configured' });
+    }
+
     const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    console.log('[AI] Calling Gemini API...');
+    
+    let data;
+    
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
           contents: [
             {
               parts: [
@@ -415,19 +422,55 @@ exports.generateFormalMessage = async (req, res, next) => {
               ],
             },
           ],
-        }),
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      data = response.data;
+    } catch (axiosError) {
+      console.error('[AI] Gemini API Error:', {
+        status: axiosError.response?.status,
+        statusText: axiosError.response?.statusText,
+        error: axiosError.response?.data,
+        message: axiosError.message
+      });
+      
+      if (axiosError.response) {
+        // API responded with error status
+        const errorData = axiosError.response.data;
+        const errorMessage = errorData?.error?.message || 
+                           errorData?.message || 
+                           `AI service error: ${axiosError.response.status}`;
+        return res.status(axiosError.response.status >= 400 && axiosError.response.status < 500 
+          ? axiosError.response.status 
+          : 500).json({ 
+          message: errorMessage 
+        });
+      } else if (axiosError.request) {
+        // Request was made but no response received
+        return res.status(500).json({ 
+          message: 'No response from AI service. Please check your internet connection.' 
+        });
+      } else {
+        // Error setting up request
+        return res.status(500).json({ 
+          message: `Failed to connect to AI service: ${axiosError.message}` 
+        });
       }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      const errorMessage = data.error?.message || data.message || 'Failed to generate message';
-      console.error('Gemini API Error:', data);
-      return res.status(response.status).json({ message: errorMessage });
     }
 
     let generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    if (!generatedText && data.candidates && data.candidates.length > 0) {
+      // Try alternative response structure
+      generatedText = data.candidates[0]?.content?.parts?.[0]?.text || 
+                     data.candidates[0]?.text || 
+                     '';
+    }
 
     if (generatedText) {
       // Split into lines for processing
@@ -470,15 +513,23 @@ exports.generateFormalMessage = async (req, res, next) => {
         .join('\n')
         .trim();
       
+      if (!generatedText) {
+        console.error('[AI] Generated text is empty after processing');
+        return res.status(500).json({ message: 'AI generated empty response' });
+      }
+      
+      console.log('[AI] Successfully generated message');
       return res.json({ message: generatedText });
     } else {
-      console.error('Unexpected API response:', data);
-      return res.status(500).json({ message: 'No response from AI' });
+      console.error('[AI] Unexpected API response structure:', JSON.stringify(data, null, 2));
+      return res.status(500).json({ 
+        message: 'No response from AI. Please try again.' 
+      });
     }
   } catch (error) {
-    console.error('AI Generation Error:', error);
+    console.error('[AI] Unexpected error:', error);
     return res.status(500).json({ 
-      message: error.message || 'Failed to generate formal message' 
+      message: error.message || 'Failed to generate formal message. Please try again.' 
     });
   }
 };
