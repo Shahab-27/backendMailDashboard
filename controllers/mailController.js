@@ -442,11 +442,43 @@ exports.generateFormalMessage = async (req, res, next) => {
       if (axiosError.response) {
         // API responded with error status
         const errorData = axiosError.response.data;
+        const status = axiosError.response.status;
+        
+        // Handle 429 quota exceeded errors with user-friendly message
+        if (status === 429) {
+          const quotaError = errorData?.error;
+          let userMessage = 'AI service quota exceeded. ';
+          
+          if (quotaError?.message) {
+            // Extract retry time if available
+            const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
+            if (retryMatch) {
+              const seconds = Math.ceil(parseFloat(retryMatch[1]));
+              const minutes = Math.floor(seconds / 60);
+              const remainingSeconds = seconds % 60;
+              
+              if (minutes > 0) {
+                userMessage += `Please try again in ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
+              } else {
+                userMessage += `Please try again in ${seconds} second${seconds > 1 ? 's' : ''}.`;
+              }
+            } else {
+              userMessage += 'Please try again later.';
+            }
+          } else {
+            userMessage += 'Please try again later.';
+          }
+          
+          return res.status(429).json({ 
+            message: userMessage 
+          });
+        }
+        
         const errorMessage = errorData?.error?.message || 
                            errorData?.message || 
-                           `AI service error: ${axiosError.response.status}`;
-        return res.status(axiosError.response.status >= 400 && axiosError.response.status < 500 
-          ? axiosError.response.status 
+                           `AI service error: ${status}`;
+        return res.status(status >= 400 && status < 500 
+          ? status 
           : 500).json({ 
           message: errorMessage 
         });
