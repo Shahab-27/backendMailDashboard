@@ -1,6 +1,7 @@
 const Mail = require('../models/Mail');
 const User = require('../models/User');
 const axios = require('axios');
+const OpenAI = require('openai');
 const { sendMail: deliverMail, isMailerConfigured } = require('../config/mailer');
 
 const ALLOWED_FOLDERS = ['inbox', 'sent', 'trash', 'drafts', 'scheduled'];
@@ -396,147 +397,140 @@ exports.generateFormalMessage = async (req, res, next) => {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
     
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your-api-key-here') {
-      console.error('[AI] GEMINI_API_KEY is not configured in environment variables');
+    if (!DEEPSEEK_API_KEY || DEEPSEEK_API_KEY === 'your-api-key-here') {
+      console.error('[AI] DEEPSEEK_API_KEY is not configured in environment variables');
       return res.status(500).json({ 
-        message: 'AI service is not configured. Please set GEMINI_API_KEY in your .env file.' 
+        message: 'AI service is not configured. Please set DEEPSEEK_API_KEY in your environment variables.' 
       });
     }
 
     // Log API key status (first 10 chars only for security)
-    console.log('[AI] Using API key:', GEMINI_API_KEY.substring(0, 10) + '...');
+    console.log('[AI] Using DeepSeek API key:', DEEPSEEK_API_KEY.substring(0, 10) + '...');
+
+    // Initialize OpenAI client with DeepSeek base URL
+    const openai = new OpenAI({
+      baseURL: 'https://api.deepseek.com',
+      apiKey: DEEPSEEK_API_KEY,
+    });
 
     const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
-    console.log('[AI] Calling Gemini API...');
-    
-    let data;
-    
-    try {
-      const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    const requestPayload = {
+      model: 'deepseek-chat',
+      messages: [
         {
-          contents: [
-            {
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
-            },
-          ],
+          role: 'system',
+          content: 'You are a helpful assistant that generates formal email content. Only provide the email body content, no subject lines or greetings.'
         },
         {
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          role: 'user',
+          content: prompt
         }
-      );
+      ],
+      stream: false,
+      temperature: 0.7
+    };
 
-      data = response.data;
-    } catch (axiosError) {
-      console.error('[AI] Gemini API Error:', {
-        status: axiosError.response?.status,
-        statusText: axiosError.response?.statusText,
-        error: axiosError.response?.data,
-        message: axiosError.message
-      });
+    console.log('[AI] Sending request to DeepSeek API using OpenAI SDK...');
+    console.log('[AI] Request payload:', JSON.stringify({
+      model: requestPayload.model,
+      messages: requestPayload.messages.map(m => ({ role: m.role, contentLength: m.content.length })),
+      stream: requestPayload.stream,
+      temperature: requestPayload.temperature
+    }, null, 2));
+    
+    let completion;
+    let generatedText = '';
+    
+    try {
+      const startTime = Date.now();
       
-      if (axiosError.response) {
+      completion = await openai.chat.completions.create(requestPayload);
+
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+      
+      console.log('[AI] Response received from DeepSeek API');
+      console.log('[AI] Response time:', duration + 'ms');
+      console.log('[AI] Response structure:', JSON.stringify({
+        id: completion.id,
+        model: completion.model,
+        hasChoices: !!completion.choices,
+        choicesLength: completion.choices?.length || 0,
+        hasMessage: !!completion.choices?.[0]?.message,
+        hasContent: !!completion.choices?.[0]?.message?.content,
+        usage: completion.usage
+      }, null, 2));
+      
+      // Extract generated text from DeepSeek response (OpenAI-compatible format)
+      if (completion?.choices && completion.choices.length > 0) {
+        generatedText = completion.choices[0]?.message?.content || '';
+        console.log('[AI] Generated text length:', generatedText.length);
+        console.log('[AI] Generated text preview:', generatedText.substring(0, 100) + '...');
+      }
+      
+    } catch (openaiError) {
+      const errorDetails = {
+        status: openaiError.status,
+        statusText: openaiError.statusText,
+        error: openaiError.error,
+        message: openaiError.message,
+        code: openaiError.code
+      };
+      
+      console.error('[AI] DeepSeek API Error:', JSON.stringify(errorDetails, null, 2));
+      
+      if (openaiError.status) {
         // API responded with error status
-        const errorData = axiosError.response.data;
-        const status = axiosError.response.status;
+        const status = openaiError.status;
+        const errorData = openaiError.error;
         
         // Handle 429 quota exceeded errors with user-friendly message
         if (status === 429) {
-          const quotaError = errorData?.error;
           let userMessage = 'AI service quota exceeded. ';
           
-          // Check if it's a free tier quota issue
-          const isFreeTierQuota = quotaError?.message?.includes('free_tier') || 
-                                  quotaError?.message?.includes('limit: 0');
+          const errorMessage = errorData?.message || 
+                             openaiError.message || 
+                             'Rate limit exceeded';
           
-          if (isFreeTierQuota) {
-            userMessage = 'The free tier quota for Gemini API has been exhausted. ';
-            userMessage += 'To continue using AI features, please:\n';
-            userMessage += '1. Enable billing on your Google Cloud account\n';
-            userMessage += '2. Or wait for the quota to reset (usually daily)\n';
-            userMessage += '3. Check your quota at: https://ai.dev/usage?tab=rate-limit';
+          // Check if retry-after header is present
+          const retryAfter = openaiError.headers?.['retry-after'];
+          if (retryAfter) {
+            const seconds = parseInt(retryAfter);
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
             
-            if (quotaError?.message) {
-              const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
-              if (retryMatch) {
-                const seconds = Math.ceil(parseFloat(retryMatch[1]));
-                const minutes = Math.floor(seconds / 60);
-                const remainingSeconds = seconds % 60;
-                
-                if (minutes > 0) {
-                  userMessage += `\n\nQuota will reset in approximately ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
-                } else {
-                  userMessage += `\n\nQuota will reset in approximately ${seconds} second${seconds > 1 ? 's' : ''}.`;
-                }
-              }
-            }
-          } else if (quotaError?.message) {
-            // Regular rate limit with retry time
-            const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
-            if (retryMatch) {
-              const seconds = Math.ceil(parseFloat(retryMatch[1]));
-              const minutes = Math.floor(seconds / 60);
-              const remainingSeconds = seconds % 60;
-              
-              if (minutes > 0) {
-                userMessage += `Please try again in ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
-              } else {
-                userMessage += `Please try again in ${seconds} second${seconds > 1 ? 's' : ''}.`;
-              }
+            if (minutes > 0) {
+              userMessage += `Please try again in ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
             } else {
-              userMessage += 'Please try again later.';
+              userMessage += `Please try again in ${seconds} second${seconds > 1 ? 's' : ''}.`;
             }
           } else {
             userMessage += 'Please try again later.';
           }
-          
-          console.error('[AI] Quota exceeded details:', {
-            isFreeTier: isFreeTierQuota,
-            errorMessage: quotaError?.message
-          });
           
           return res.status(429).json({ 
             message: userMessage 
           });
         }
         
-        const errorMessage = errorData?.error?.message || 
-                           errorData?.message || 
+        const errorMessage = errorData?.message || 
+                           openaiError.message || 
                            `AI service error: ${status}`;
         return res.status(status >= 400 && status < 500 
           ? status 
           : 500).json({ 
           message: errorMessage 
         });
-      } else if (axiosError.request) {
-        // Request was made but no response received
-        return res.status(500).json({ 
-          message: 'No response from AI service. Please check your internet connection.' 
-        });
       } else {
-        // Error setting up request
+        // Error setting up request or network error
+        console.error('[AI] Request error:', openaiError.message);
         return res.status(500).json({ 
-          message: `Failed to connect to AI service: ${axiosError.message}` 
+          message: `Failed to connect to AI service: ${openaiError.message || 'Unknown error'}` 
         });
       }
-    }
-
-    let generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    if (!generatedText && data.candidates && data.candidates.length > 0) {
-      // Try alternative response structure
-      generatedText = data.candidates[0]?.content?.parts?.[0]?.text || 
-                     data.candidates[0]?.text || 
-                     '';
     }
 
     if (generatedText) {
@@ -585,16 +579,18 @@ exports.generateFormalMessage = async (req, res, next) => {
         return res.status(500).json({ message: 'AI generated empty response' });
       }
       
-      console.log('[AI] Successfully generated message');
+      console.log('[AI] Successfully generated formal message');
+      console.log('[AI] Final text length:', generatedText.length);
       return res.json({ message: generatedText });
     } else {
-      console.error('[AI] Unexpected API response structure:', JSON.stringify(data, null, 2));
+      console.error('[AI] Unexpected API response structure:', JSON.stringify(responseData, null, 2));
       return res.status(500).json({ 
         message: 'No response from AI. Please try again.' 
       });
     }
   } catch (error) {
     console.error('[AI] Unexpected error:', error);
+    console.error('[AI] Error stack:', error.stack);
     return res.status(500).json({ 
       message: error.message || 'Failed to generate formal message. Please try again.' 
     });
