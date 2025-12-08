@@ -390,7 +390,9 @@ exports.processScheduledEmails = async (req, res, next) => {
 
 exports.generateFormalMessage = async (req, res, next) => {
   try {
+    console.log('[AI] generateFormalMessage endpoint called');
     const { message } = req.body;
+    console.log('[AI] Received message length:', message?.length || 0);
 
     if (!message || !message.trim()) {
       return res.status(400).json({ message: 'Message is required' });
