@@ -410,55 +410,102 @@ exports.generateFormalMessage = async (req, res, next) => {
 
     const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
+    // List of models to try in order (fallback if first one fails)
+    const models = [
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-pro'
+    ];
+
     console.log('[AI] Sending request to Gemini API...');
     console.log('[AI] Request payload:', JSON.stringify({
-      model: 'gemini-2.0-flash',
+      model: models[0],
       promptLength: prompt.length
     }, null, 2));
     
     let response;
     let responseData;
+    let lastError = null;
+    let modelUsed = null;
     
-    try {
-      const startTime = Date.now();
-      
-      response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          contents: [
-            {
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
-            },
-          ],
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
+    // Try each model until one works
+    for (const model of models) {
+      try {
+        const startTime = Date.now();
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+        
+        console.log(`[AI] Trying model: ${model}`);
+        console.log(`[AI] API URL: ${apiUrl.replace(GEMINI_API_KEY, 'API_KEY_HIDDEN')}`);
+        
+        response = await axios.post(
+          apiUrl,
+          {
+            contents: [
+              {
+                parts: [
+                  {
+                    text: prompt,
+                  },
+                ],
+              },
+            ],
           },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        const endTime = Date.now();
+        const duration = endTime - startTime;
+
+        responseData = response.data;
+        modelUsed = model;
+        
+        console.log(`[AI] Successfully received response from model: ${model}`);
+        console.log('[AI] Response status:', response.status);
+        console.log('[AI] Response time:', duration + 'ms');
+        console.log('[AI] Response structure:', JSON.stringify({
+          hasCandidates: !!responseData.candidates,
+          candidatesLength: responseData.candidates?.length || 0,
+          hasContent: !!responseData.candidates?.[0]?.content,
+          hasParts: !!responseData.candidates?.[0]?.content?.parts,
+          hasText: !!responseData.candidates?.[0]?.content?.parts?.[0]?.text
+        }, null, 2));
+        
+        // If we got here, the request was successful, break out of the loop
+        break;
+        
+      } catch (modelError) {
+        lastError = modelError;
+        console.warn(`[AI] Model ${model} failed:`, modelError.response?.status || modelError.message);
+        
+        // If it's not a 429 or 404 (model not found), don't try other models
+        if (modelError.response?.status && modelError.response.status !== 429 && modelError.response.status !== 404) {
+          console.error(`[AI] Non-retryable error for model ${model}, stopping fallback attempts`);
+          break;
         }
-      );
-
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-
-      responseData = response.data;
+        
+        // If this is the last model, we'll handle the error below
+        if (model === models[models.length - 1]) {
+          console.error('[AI] All models failed, using last error');
+        } else {
+          console.log(`[AI] Trying next model...`);
+        }
+      }
+    }
+    
+    // If we don't have a successful response, handle the error
+    if (!response || !responseData) {
+      const axiosError = lastError;
       
-      console.log('[AI] Response received from Gemini API');
-      console.log('[AI] Response status:', response.status);
-      console.log('[AI] Response time:', duration + 'ms');
-      console.log('[AI] Response structure:', JSON.stringify({
-        hasCandidates: !!responseData.candidates,
-        candidatesLength: responseData.candidates?.length || 0,
-        hasContent: !!responseData.candidates?.[0]?.content,
-        hasParts: !!responseData.candidates?.[0]?.content?.parts,
-        hasText: !!responseData.candidates?.[0]?.content?.parts?.[0]?.text
-      }, null, 2));
-      
-    } catch (axiosError) {
+      if (!axiosError) {
+        return res.status(500).json({ 
+          message: 'Failed to connect to AI service. No error details available.' 
+        });
+      }
       const errorDetails = {
         status: axiosError.response?.status,
         statusText: axiosError.response?.statusText,
@@ -476,19 +523,23 @@ exports.generateFormalMessage = async (req, res, next) => {
         // Handle 429 quota exceeded errors with user-friendly message
         if (status === 429) {
           const quotaError = errorData?.error;
-          let userMessage = 'AI service quota exceeded. ';
+          let userMessage = '';
           
           // Check if it's a free tier quota issue
           const isFreeTierQuota = quotaError?.message?.includes('free_tier') || 
                                   quotaError?.message?.includes('limit: 0');
           
           if (isFreeTierQuota) {
-            userMessage = 'The free tier quota for Gemini API has been exhausted. ';
-            userMessage += 'To continue using AI features, please:\n';
-            userMessage += '1. Enable billing on your Google Cloud account\n';
-            userMessage += '2. Or wait for the quota to reset (usually daily)\n';
-            userMessage += '3. Check your quota at: https://ai.dev/usage?tab=rate-limit';
+            userMessage = '⚠️ Gemini API Free Tier Quota Exhausted\n\n';
+            userMessage += 'Your free tier quota has been completely used up (limit: 0).\n\n';
+            userMessage += 'Solutions:\n';
+            userMessage += '1. Enable billing on Google Cloud Console to get paid tier quota\n';
+            userMessage += '2. Wait for daily quota reset (usually resets at midnight PST)\n';
+            userMessage += '3. Check your quota status: https://ai.dev/usage?tab=rate-limit\n\n';
+            userMessage += 'Note: The free tier has very limited requests per day. ';
+            userMessage += 'Once exhausted, you must either enable billing or wait for the next reset cycle.';
             
+            // Extract retry time if available (though for free tier, this is usually just a rate limit, not quota reset)
             if (quotaError?.message) {
               const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
               if (retryMatch) {
@@ -497,14 +548,20 @@ exports.generateFormalMessage = async (req, res, next) => {
                 const remainingSeconds = seconds % 60;
                 
                 if (minutes > 0) {
-                  userMessage += `\n\nQuota will reset in approximately ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
-                } else {
-                  userMessage += `\n\nQuota will reset in approximately ${seconds} second${seconds > 1 ? 's' : ''}.`;
+                  userMessage += `\n\n⏱️ Rate limit cooldown: ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}`;
+                } else if (seconds > 0) {
+                  userMessage += `\n\n⏱️ Rate limit cooldown: ${seconds} second${seconds > 1 ? 's' : ''}`;
                 }
               }
             }
+            
+            console.error('[AI] Free tier quota exhausted:', {
+              errorMessage: quotaError?.message,
+              retryTime: quotaError?.message?.match(/Please retry in ([\d.]+)s/)?.[1]
+            });
           } else if (quotaError?.message) {
             // Regular rate limit with retry time
+            userMessage = 'AI service rate limit exceeded. ';
             const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
             if (retryMatch) {
               const seconds = Math.ceil(parseFloat(retryMatch[1]));
@@ -520,13 +577,8 @@ exports.generateFormalMessage = async (req, res, next) => {
               userMessage += 'Please try again later.';
             }
           } else {
-            userMessage += 'Please try again later.';
+            userMessage = 'AI service quota exceeded. Please try again later.';
           }
-          
-          console.error('[AI] Quota exceeded details:', {
-            isFreeTier: isFreeTierQuota,
-            errorMessage: quotaError?.message
-          });
           
           return res.status(429).json({ 
             message: userMessage 
@@ -567,6 +619,7 @@ exports.generateFormalMessage = async (req, res, next) => {
     }
 
     if (generatedText) {
+      console.log(`[AI] Successfully generated text using model: ${modelUsed || 'unknown'}`);
       console.log('[AI] Generated text length:', generatedText.length);
       console.log('[AI] Generated text preview:', generatedText.substring(0, 100) + '...');
       
