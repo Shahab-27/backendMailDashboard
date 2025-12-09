@@ -398,37 +398,35 @@ exports.generateFormalMessage = async (req, res, next) => {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    // Allow multiple env key names so a newly added key is picked up reliably
-    const GEMINI_API_KEY =
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY ||
-      process.env.GENERATIVE_LANGUAGE_API_KEY ||
-      process.env.GOOGLE_GENAI_KEY ||
-      process.env.AI_API_KEY;
+    // Prefer OpenRouter; fallbacks kept for backwards compatibility
+    const OPENROUTER_API_KEY =
+      process.env.OPENROUTER_API_KEY ||
+      process.env.OR_API_KEY ||
+      process.env.AI_API_KEY ||
+      process.env.GEMINI_API_KEY;
     
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your-api-key-here') {
-      console.error('[AI] GEMINI_API_KEY is not configured in environment variables');
+    if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY === 'your-api-key-here') {
+      console.error('[AI] OPENROUTER_API_KEY is not configured in environment variables');
       return res.status(500).json({ 
-        message: 'AI service is not configured. Please set GEMINI_API_KEY in your environment variables.' 
+        message: 'AI service is not configured. Please set OPENROUTER_API_KEY in your environment variables.' 
       });
     }
 
     // Log API key status (first 10 chars only for security)
-    console.log('[AI] Using Gemini API key:', GEMINI_API_KEY.substring(0, 10) + '...');
+    console.log('[AI] Using OpenRouter API key:', OPENROUTER_API_KEY.substring(0, 10) + '...');
 
     const prompt = `i have to send mail ${message} give only the email body content in short and formal. Do not include subject line, greeting like "Subject:" or any subject-related text. Only provide the message body content.`;
 
-    // Use only gemini-2.0-flash model
-    const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-    const apiUrl = `${API_URL}?key=${GEMINI_API_KEY}`;
+    // OpenRouter settings
+    const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+    const MODEL = 'google/gemini-2.0-flash';
 
-    console.log('[AI] Sending request to Gemini API...');
+    console.log('[AI] Sending request to OpenRouter...');
     console.log('[AI] Request payload:', JSON.stringify({
-      model: 'gemini-2.0-flash',
+      model: MODEL,
       promptLength: prompt.length
     }, null, 2));
-    console.log(`[AI] API URL: ${apiUrl.replace(GEMINI_API_KEY, 'API_KEY_HIDDEN')}`);
-    
+
     let response;
     let responseData;
     
@@ -436,21 +434,24 @@ exports.generateFormalMessage = async (req, res, next) => {
       const startTime = Date.now();
       
       response = await axios.post(
-        apiUrl,
+        API_URL,
         {
-          contents: [
+          model: MODEL,
+          messages: [
             {
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
+              role: 'system',
+              content: 'You are a concise assistant that writes short, formal email bodies without subjects.',
+            },
+            {
+              role: 'user',
+              content: prompt,
             },
           ],
         },
         {
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
           },
         }
       );
@@ -460,15 +461,14 @@ exports.generateFormalMessage = async (req, res, next) => {
 
       responseData = response.data;
       
-      console.log(`[AI] Successfully received response from model: gemini-2.0-flash`);
+      console.log(`[AI] Successfully received response from model: ${MODEL}`);
       console.log('[AI] Response status:', response.status);
       console.log('[AI] Response time:', duration + 'ms');
       console.log('[AI] Response structure:', JSON.stringify({
-        hasCandidates: !!responseData.candidates,
-        candidatesLength: responseData.candidates?.length || 0,
-        hasContent: !!responseData.candidates?.[0]?.content,
-        hasParts: !!responseData.candidates?.[0]?.content?.parts,
-        hasText: !!responseData.candidates?.[0]?.content?.parts?.[0]?.text
+        hasChoices: !!responseData.choices,
+        choicesLength: responseData.choices?.length || 0,
+        hasMessage: !!responseData.choices?.[0]?.message,
+        hasContent: !!responseData.choices?.[0]?.message?.content
       }, null, 2));
       
     } catch (axiosError) {
@@ -486,89 +486,23 @@ exports.generateFormalMessage = async (req, res, next) => {
         message: axiosError.message
       };
       
-      console.error('[AI] Gemini API Error:', JSON.stringify(errorDetails, null, 2));
+      console.error('[AI] OpenRouter API Error:', JSON.stringify(errorDetails, null, 2));
       
       if (axiosError.response) {
         // API responded with error status
         const errorData = axiosError.response.data;
         const status = axiosError.response.status;
         
-        // Handle 429 quota exceeded errors with user-friendly message
-        if (status === 429) {
-          const quotaError = errorData?.error;
-          let userMessage = '';
-          
-          // Check if it's a free tier quota issue
-          const isFreeTierQuota = quotaError?.message?.includes('free_tier') || 
-                                  quotaError?.message?.includes('limit: 0');
-          
-          if (isFreeTierQuota) {
-            userMessage = '⚠️ Gemini API Free Tier Quota Exhausted\n\n';
-            userMessage += 'Your free tier quota has been completely used up (limit: 0).\n\n';
-            userMessage += 'Solutions:\n';
-            userMessage += '1. Enable billing on Google Cloud Console to get paid tier quota\n';
-            userMessage += '2. Wait for daily quota reset (usually resets at midnight PST)\n';
-            userMessage += '3. Check your quota status: https://ai.dev/usage?tab=rate-limit\n\n';
-            userMessage += 'Note: The free tier has very limited requests per day. ';
-            userMessage += 'Once exhausted, you must either enable billing or wait for the next reset cycle.';
-            
-            // Extract retry time if available (though for free tier, this is usually just a rate limit, not quota reset)
-            if (quotaError?.message) {
-              const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
-              if (retryMatch) {
-                const seconds = Math.ceil(parseFloat(retryMatch[1]));
-                const minutes = Math.floor(seconds / 60);
-                const remainingSeconds = seconds % 60;
-                
-                if (minutes > 0) {
-                  userMessage += `\n\n⏱️ Rate limit cooldown: ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}`;
-                } else if (seconds > 0) {
-                  userMessage += `\n\n⏱️ Rate limit cooldown: ${seconds} second${seconds > 1 ? 's' : ''}`;
-                }
-              }
-            }
-            
-            console.error('[AI] Free tier quota exhausted:', {
-              errorMessage: quotaError?.message,
-              retryTime: quotaError?.message?.match(/Please retry in ([\d.]+)s/)?.[1]
-            });
-          } else if (quotaError?.message) {
-            // Regular rate limit with retry time
-            userMessage = 'AI service rate limit exceeded. ';
-            const retryMatch = quotaError.message.match(/Please retry in ([\d.]+)s/);
-            if (retryMatch) {
-              const seconds = Math.ceil(parseFloat(retryMatch[1]));
-              const minutes = Math.floor(seconds / 60);
-              const remainingSeconds = seconds % 60;
-              
-              if (minutes > 0) {
-                userMessage += `Please try again in ${minutes} minute${minutes > 1 ? 's' : ''}${remainingSeconds > 0 ? ` and ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}` : ''}.`;
-              } else {
-                userMessage += `Please try again in ${seconds} second${seconds > 1 ? 's' : ''}.`;
-              }
-            } else {
-              userMessage += 'Please try again later.';
-            }
-          } else {
-            userMessage = 'AI service quota exceeded. Please try again later.';
-          }
-          
-          return res.status(429).json({ 
-            message: userMessage 
-          });
-        }
-        
-        const errorMessage = errorData?.error?.message || 
-                           errorData?.message || 
-                           `AI service error: ${status}`;
-        return res.status(status >= 400 && status < 500 
-          ? status 
-          : 500).json({ 
-          message: errorMessage 
+        const errorMessage =
+          errorData?.error?.message ||
+          errorData?.message ||
+          `AI service error: ${status}`;
+        return res.status(status >= 400 && status < 500 ? status : 500).json({
+          message: errorMessage,
         });
       } else if (axiosError.request) {
         // Request was made but no response received
-        console.error('[AI] No response received from Gemini API');
+        console.error('[AI] No response received from OpenRouter API');
         return res.status(500).json({ 
           message: 'No response from AI service. Please check your internet connection.' 
         });
@@ -582,18 +516,11 @@ exports.generateFormalMessage = async (req, res, next) => {
       }
     }
 
-    // Extract generated text from Gemini response
-    let generatedText = responseData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    if (!generatedText && responseData.candidates && responseData.candidates.length > 0) {
-      // Try alternative response structure
-      generatedText = responseData.candidates[0]?.content?.parts?.[0]?.text || 
-                     responseData.candidates[0]?.text || 
-                     '';
-    }
+    // Extract generated text from OpenRouter response
+    let generatedText = responseData.choices?.[0]?.message?.content || '';
 
     if (generatedText) {
-      console.log(`[AI] Successfully generated text using model: gemini-2.0-flash`);
+      console.log(`[AI] Successfully generated text using model: ${MODEL}`);
       console.log('[AI] Generated text length:', generatedText.length);
       console.log('[AI] Generated text preview:', generatedText.substring(0, 100) + '...');
       
