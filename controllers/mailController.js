@@ -398,7 +398,13 @@ exports.generateFormalMessage = async (req, res, next) => {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    // Allow multiple env key names so a newly added key is picked up reliably
+    const GEMINI_API_KEY =
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY ||
+      process.env.GENERATIVE_LANGUAGE_API_KEY ||
+      process.env.GOOGLE_GENAI_KEY ||
+      process.env.AI_API_KEY;
     
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your-api-key-here') {
       console.error('[AI] GEMINI_API_KEY is not configured in environment variables');
