@@ -308,11 +308,12 @@ exports.processScheduledEmails = async (req, res, next) => {
     }
 
     const now = new Date();
-    // Find scheduled emails that are due (check emails scheduled up to 5 minutes ago to catch any missed)
-    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60000);
+    // Find all scheduled emails that are due (anything at or before "now")
+    // Using only an upper bound prevents us from missing emails if the worker
+    // was offline longer than 5 minutes.
     const scheduledMails = await Mail.find({
       isScheduled: true,
-      scheduledAt: { $lte: now, $gte: fiveMinutesAgo },
+      scheduledAt: { $lte: now },
       folder: 'scheduled',
     }).populate('owner', 'email');
 
@@ -383,6 +384,91 @@ exports.processScheduledEmails = async (req, res, next) => {
       message: 'Scheduled emails processed',
       ...results,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Mailjet inbound webhook to drop received emails into user inbox
+exports.handleInboundWebhook = async (req, res, next) => {
+  try {
+    // Optional simple token check
+    const inboundSecret = process.env.MAILJET_INBOUND_SECRET;
+    const token = req.query.token || req.headers['x-webhook-token'] || req.headers['x-mailjet-token'];
+    if (inboundSecret && token !== inboundSecret) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const payload = req.body || {};
+
+    // Extract sender
+    const from =
+      payload.SenderEmail ||
+      payload.From ||
+      payload.sender ||
+      (payload.Headers && payload.Headers.From) ||
+      '';
+
+    // Extract recipients
+    const toRaw =
+      payload.To ||
+      payload.Recipient ||
+      (payload.Headers && payload.Headers.To) ||
+      '';
+
+    const recipients = (Array.isArray(toRaw) ? toRaw : String(toRaw).split(','))
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    const subject =
+      payload.Subject ||
+      (payload.Headers && payload.Headers.Subject) ||
+      '';
+
+    const text =
+      payload['Text-part'] ||
+      payload.TextPart ||
+      payload.text ||
+      payload['text-part'] ||
+      '';
+
+    const html =
+      payload['HTML-part'] ||
+      payload.HTMLPart ||
+      payload.html ||
+      payload['html-part'] ||
+      '';
+
+    if (!recipients.length || !from) {
+      return res.status(400).json({ message: 'Missing required fields (from/to)' });
+    }
+
+    const results = { saved: 0, skipped: 0, recipients: [] };
+
+    for (const recipientEmail of recipients) {
+      const user = await User.findOne({ email: recipientEmail });
+      if (!user) {
+        results.skipped++;
+        results.recipients.push({ email: recipientEmail, status: 'no-user' });
+        continue;
+      }
+
+      await Mail.create({
+        owner: user._id,
+        from,
+        to: recipientEmail,
+        subject,
+        body: text,
+        htmlBody: html,
+        folder: 'inbox',
+        attachments: [], // Attachments handling can be added later
+      });
+
+      results.saved++;
+      results.recipients.push({ email: recipientEmail, status: 'saved' });
+    }
+
+    return res.json({ message: 'Inbound processed', ...results });
   } catch (error) {
     next(error);
   }

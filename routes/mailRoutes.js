@@ -10,6 +10,7 @@ const {
   generateFormalMessage,
   emptyTrash,
   processScheduledEmails,
+  handleInboundWebhook,
 } = require('../controllers/mailController');
 
 
@@ -17,6 +18,8 @@ const router = express.Router();
 
 // Public endpoint for cron job (no auth required)
 router.post('/process-scheduled', processScheduledEmails);
+// Public endpoint for Mailjet inbound webhook
+router.post('/inbound', handleInboundWebhook);
 
 router.use(authMiddleware);
 
