@@ -16,8 +16,8 @@ const app = express();
 // Database
 connectDB();
 
-// Set up automatic scheduled email processing (runs every minute)
-setInterval(async () => {
+// Helper to run scheduled email processing (used by both interval + immediate kick)
+const runScheduledProcessor = async () => {
   try {
     const req = { body: {}, headers: {} };
     const res = {
@@ -29,14 +29,19 @@ setInterval(async () => {
       status: () => res,
     };
     const next = () => {};
-    
     await processScheduledEmails(req, res, next);
   } catch (error) {
     console.error('[CRON] Error processing scheduled emails:', error);
   }
-}, 60000); // Run every minute
+};
 
-console.log('[CRON] Scheduled email processor started (runs every minute)');
+// Kick once on startup so demos don't wait for the first tick
+runScheduledProcessor();
+
+// Set up automatic scheduled email processing (runs every 60 seconds)
+setInterval(runScheduledProcessor, 60000);
+
+console.log('[CRON] Scheduled email processor started (runs every 60s)');
 
 // Middleware
 app.use(cors());
