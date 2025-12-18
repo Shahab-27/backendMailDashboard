@@ -207,15 +207,8 @@ const sendMail = async (options = {}) => {
   
   let textContent = options.text || options.html || '';
   
-  // If user wants a different FROM, add it to the email body
-  if (replyToEmail && replyToEmail !== verifiedFromEmail) {
-    const fromInfo = `\n\n---\nFrom: ${replyToName ? `${replyToName} ` : ''}<${replyToEmail}>`;
-    htmlContent = htmlContent.replace('</body>', `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">${fromInfo}</div></body>`).replace('</html>', `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">${fromInfo}</div></html>`);
-    if (!htmlContent.includes(fromInfo)) {
-      htmlContent = htmlContent.replace('</body>', `<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">${fromInfo}</div></body>`);
-    }
-    textContent += fromInfo;
-  }
+  // If user wants a different FROM, use it only as Reply-To header (no extra footer in body)
+  // This avoids adding a visible "--- From:" line at the end of the email content.
 
   // Parse CC and BCC recipients
   const ccRecipients = options.cc ? options.cc.split(',').map(email => ({
